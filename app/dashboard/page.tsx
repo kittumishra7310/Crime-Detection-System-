@@ -8,7 +8,11 @@ import { Navbar } from "@/components/Navbar"
 import { DetectionCard } from "@/components/DetectionCard"
 import { TrendChart } from "@/components/TrendChart"
 import { CameraStatus } from "@/components/CameraStatus"
+import { FileUpload } from "@/components/FileUpload"
+import { LiveDetection } from "@/components/LiveDetection"
+import { RealTimeAlerts } from "@/components/RealTimeAlerts"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ActivityIcon, AlertTriangleIcon, ClockIcon, EyeIcon } from "@/components/icons"
 
 interface Detection {
@@ -199,34 +203,67 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <TrendChart data={trendData} title="Detection Trends (24h)" />
-            <CameraStatus cameras={cameras} />
-          </div>
+          {/* Detection Tools */}
+          <Tabs defaultValue="overview" className="space-y-6">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="live-detection">Live Detection</TabsTrigger>
+              <TabsTrigger value="file-upload">File Upload</TabsTrigger>
+              <TabsTrigger value="alerts">Alerts</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="overview" className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <TrendChart data={trendData} title="Detection Trends (24h)" />
+                <CameraStatus cameras={cameras} />
+              </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="text-foreground">Live Video Feed</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="aspect-video bg-muted rounded-lg flex items-center justify-center border border-border">
-                  <div className="text-center">
-                    <EyeIcon className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
-                    <p className="text-muted-foreground font-medium">Camera Feed Placeholder</p>
-                    <p className="text-sm text-muted-foreground">Connect to RTSP/WebRTC stream</p>
-                  </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="bg-card border-border">
+                  <CardHeader>
+                    <CardTitle className="text-foreground">System Status</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="aspect-video bg-muted rounded-lg flex items-center justify-center border border-border">
+                      <div className="text-center">
+                        <EyeIcon className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                        <p className="text-muted-foreground font-medium">System Overview</p>
+                        <p className="text-sm text-muted-foreground">All systems operational</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="space-y-4">
+                  <h2 className="text-xl font-semibold text-foreground">Recent Detections</h2>
+                  {detections.map((detection) => (
+                    <DetectionCard key={detection.id} detection={detection} />
+                  ))}
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </TabsContent>
 
-            <div className="space-y-4">
-              <h2 className="text-xl font-semibold text-foreground">Recent Detections</h2>
-              {detections.map((detection) => (
-                <DetectionCard key={detection.id} detection={detection} />
-              ))}
-            </div>
-          </div>
+            <TabsContent value="live-detection">
+              <LiveDetection onDetectionAlert={(alert) => {
+                // Handle new detection alerts
+                console.log('New detection alert:', alert)
+              }} />
+            </TabsContent>
+
+            <TabsContent value="file-upload">
+              <FileUpload onDetectionComplete={(result) => {
+                // Handle completed file detection
+                console.log('File detection completed:', result)
+              }} />
+            </TabsContent>
+
+            <TabsContent value="alerts">
+              <RealTimeAlerts onNewAlert={(alert) => {
+                // Handle new alerts
+                console.log('New alert received:', alert)
+              }} />
+            </TabsContent>
+          </Tabs>
         </main>
       </div>
     </div>

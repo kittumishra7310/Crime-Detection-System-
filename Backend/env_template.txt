@@ -1,0 +1,24 @@
+# Environment Configuration Template
+# Copy this file to .env and update the values
+
+# Database Configuration
+DATABASE_URL=mysql+pymysql://username:password@localhost/surveillance_db
+
+# JWT Configuration
+SECRET_KEY=your-secret-key-change-in-production-use-long-random-string
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# Redis Configuration (Optional)
+REDIS_URL=redis://localhost:6379
+
+# File Storage
+UPLOAD_DIR=uploads
+MODEL_PATH=models/crime_detection_model.h5
+
+# Detection Settings
+CONFIDENCE_THRESHOLD=0.7
+ALERT_THRESHOLD=0.8
+
+# CORS Settings
+ALLOWED_ORIGINS=["http://localhost:3000", "http://127.0.0.1:3000"]

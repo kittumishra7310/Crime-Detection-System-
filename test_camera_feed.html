@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Feed Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .camera-container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>Camera Feed Test</h1>
+    
+    <div class="camera-container">
+        <h2>Authentication</h2>
+        <button onclick="login()">Login as Admin</button>
+        <div id="auth-status" class="status info">Not authenticated</div>
+    </div>
+
+    <div class="camera-container">
+        <h2>Camera Control</h2>
+        <button onclick="startDetection()">Start Detection</button>
+        <button onclick="stopDetection()">Stop Detection</button>
+        <div id="detection-status" class="status info">Detection stopped</div>
+    </div>
+
+    <div class="camera-container">
+        <h2>Camera Feed</h2>
+        <button onclick="loadFeed()">Load Camera Feed</button>
+        <button onclick="stopFeed()">Stop Feed</button>
+        <div id="feed-status" class="status info">Feed not loaded</div>
+        <br><br>
+        <img id="camera-feed" src="" alt="Camera feed will appear here" style="display: none;">
+    </div>
+
+    <script>
+        let token = null;
+        const API_BASE = 'http://localhost:8000';
+        
+        async function login() {
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: 'admin', password: 'admin123' })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    token = data.access_token;
+                    document.getElementById('auth-status').className = 'status success';
+                    document.getElementById('auth-status').textContent = 'Authenticated successfully';
+                } else {
+                    throw new Error('Login failed');
+                }
+            } catch (error) {
+                document.getElementById('auth-status').className = 'status error';
+                document.getElementById('auth-status').textContent = `Login error: ${error.message}`;
+            }
+        }
+        
+        async function startDetection() {
+            if (!token) {
+                alert('Please login first');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/live/start/1`, {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('detection-status').className = 'status success';
+                    document.getElementById('detection-status').textContent = `Detection started: ${data.message}`;
+                } else {
+                    throw new Error('Failed to start detection');
+                }
+            } catch (error) {
+                document.getElementById('detection-status').className = 'status error';
+                document.getElementById('detection-status').textContent = `Detection error: ${error.message}`;
+            }
+        }
+        
+        async function stopDetection() {
+            if (!token) {
+                alert('Please login first');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/live/stop/1`, {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('detection-status').className = 'status success';
+                    document.getElementById('detection-status').textContent = `Detection stopped: ${data.message}`;
+                } else {
+                    throw new Error('Failed to stop detection');
+                }
+            } catch (error) {
+                document.getElementById('detection-status').className = 'status error';
+                document.getElementById('detection-status').textContent = `Detection error: ${error.message}`;
+            }
+        }
+        
+        function loadFeed() {
+            if (!token) {
+                alert('Please login first');
+                return;
+            }
+            
+            const img = document.getElementById('camera-feed');
+            const feedUrl = `${API_BASE}/live/feed/1?token=${encodeURIComponent(token)}`;
+            
+            img.onload = function() {
+                document.getElementById('feed-status').className = 'status success';
+                document.getElementById('feed-status').textContent = 'Camera feed loaded successfully';
+            };
+            
+            img.onerror = function() {
+                document.getElementById('feed-status').className = 'status error';
+                document.getElementById('feed-status').textContent = 'Failed to load camera feed - check console for details';
+            };
+            
+            img.src = feedUrl;
+            img.style.display = 'block';
+            
+            document.getElementById('feed-status').className = 'status info';
+            document.getElementById('feed-status').textContent = 'Loading camera feed...';
+        }
+        
+        function stopFeed() {
+            const img = document.getElementById('camera-feed');
+            img.src = '';
+            img.style.display = 'none';
+            document.getElementById('feed-status').className = 'status info';
+            document.getElementById('feed-status').textContent = 'Feed stopped';
+        }
+    </script>
+</body>
+</html>

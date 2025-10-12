@@ -10,6 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { ShieldIcon } from "@/components/icons"
+import { apiService } from "@/services/api"
+import Link from "next/link"
 
 export default function LoginPage() {
   const [username, setUsername] = useState("")
@@ -24,15 +26,18 @@ export default function LoginPage() {
     setError("")
 
     try {
-      // Set a mock token and redirect immediately
-      localStorage.setItem("token", "mock-token-for-testing")
-      setTimeout(() => {
+      const response = await apiService.login(username, password)
+      
+      if (response.access_token) {
+        // Successful login - redirect to dashboard
         router.push("/dashboard")
-      }, 500) // Small delay to show loading state
-    } catch (err) {
-      setError("Navigation failed. Please try again.")
+      } else {
+        setError("Invalid credentials. Please try again.")
+      }
+    } catch (err: any) {
+      setError(err.message || "Login failed. Please check your credentials.")
     } finally {
-      setTimeout(() => setIsLoading(false), 500)
+      setIsLoading(false)
     }
   }
 
@@ -44,7 +49,7 @@ export default function LoginPage() {
             <ShieldIcon className="h-12 w-12 text-blue-500" />
           </div>
           <CardTitle className="text-2xl font-bold text-slate-100">Smart Surveillance</CardTitle>
-          <CardDescription className="text-slate-400">Testing Mode - Enter any credentials to continue</CardDescription>
+          <CardDescription className="text-slate-400">Sign in with your account credentials</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -58,7 +63,7 @@ export default function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-400"
-                placeholder="Enter any username"
+                placeholder="Enter your username"
                 required
               />
             </div>
@@ -72,7 +77,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-400"
-                placeholder="Enter any password"
+                placeholder="Enter password"
                 required
               />
             </div>
@@ -82,9 +87,18 @@ export default function LoginPage() {
               </Alert>
             )}
             <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white" disabled={isLoading}>
-              {isLoading ? "Signing in..." : "Sign In (Testing Mode)"}
+              {isLoading ? "Signing in..." : "Sign In"}
             </Button>
           </form>
+
+          <div className="mt-6 text-center">
+            <p className="text-slate-400 text-sm">
+              Don't have an account?{" "}
+              <Link href="/register" className="text-blue-400 hover:text-blue-300 underline">
+                Create one here
+              </Link>
+            </p>
+          </div>
         </CardContent>
       </Card>
     </div>
