@@ -69,10 +69,27 @@ class ApiService {
 
   // Cameras
   async getCameras() {
-    const response = await fetch(`${API_BASE_URL}/api/cameras`, {
-      headers: this.getAuthHeaders(),
-    })
-    return response.json()
+    try {
+      const response = await fetch(`/api/proxy/cameras`, {
+        headers: this.getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          // Handle unauthorized/forbidden (e.g., redirect to login)
+          this.logout();
+          window.location.href = '/login';
+          throw new Error('Session expired. Please log in again.');
+        }
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Failed to fetch cameras: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error in getCameras:', error);
+      throw error;
+    }
   }
 
   // Detections
@@ -112,29 +129,41 @@ class ApiService {
 
   // Live Detection
   async startLiveDetection(cameraId: number, source: string = "0") {
-    const response = await fetch(`${API_BASE_URL}/live/start/${cameraId}?source=${source}`, {
-      method: "POST",
-      headers: this.getAuthHeaders(),
-    })
+    try {
+      const response = await fetch(`/api/proxy/live/start/${cameraId}?source=${source}`, {
+        method: "POST",
+        headers: this.getAuthHeaders(),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to start live detection: ${response.statusText}`)
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Failed to start live detection: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error in startLiveDetection:', error);
+      throw error;
     }
-
-    return response.json()
   }
 
   async stopLiveDetection(cameraId: number) {
-    const response = await fetch(`${API_BASE_URL}/live/stop/${cameraId}`, {
-      method: "POST",
-      headers: this.getAuthHeaders(),
-    })
+    try {
+      const response = await fetch(`/api/proxy/live/stop/${cameraId}`, {
+        method: "POST",
+        headers: this.getAuthHeaders(),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to stop live detection: ${response.statusText}`)
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Failed to stop live detection: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error in stopLiveDetection:', error);
+      throw error;
     }
-
-    return response.json()
   }
 
   async getLiveDetectionStatus() {
@@ -147,7 +176,7 @@ class ApiService {
   // Get live camera feed URL with authentication token
   getLiveFeedUrl(cameraId: number) {
     // This points to the Next.js proxy route for the live feed
-    return `/api/live/feed/${cameraId}`;
+    return `/api/proxy/live/feed/${cameraId}`;
   }
 
 

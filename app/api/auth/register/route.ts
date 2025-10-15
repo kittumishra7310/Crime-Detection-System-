@@ -6,7 +6,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -18,14 +18,14 @@ export async function POST(request: Request) {
     
     if (!response.ok) {
       return NextResponse.json(
-        { error: data.detail || 'Authentication failed' },
+        { error: data.detail || 'Registration failed' },
         { status: response.status }
       );
     }
 
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('Registration error:', error);
     return NextResponse.json(
       { error: 'Failed to connect to the server' },
       { status: 500 }

@@ -22,12 +22,13 @@ interface LiveDetectionProps {
 }
 
 export function LiveDetection({ onDetectionAlert }: LiveDetectionProps) {
-  const [cameras, setCameras] = useState<Camera[]>([])
+  const [cameras, setCameras] = useState<Camera[]>(() => []) // Initialize with empty array
   const [selectedCamera, setSelectedCamera] = useState<number | null>(null)
   const [isDetecting, setIsDetecting] = useState(false)
   const [error, setError] = useState<string>("")
   const [status, setStatus] = useState<string>("")
   const [feedUrl, setFeedUrl] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(true)
   const videoRef = useRef<HTMLImageElement>(null);
 
   // Load cameras on component mount
@@ -44,14 +45,36 @@ export function LiveDetection({ onDetectionAlert }: LiveDetectionProps) {
   }, []);
 
   const loadCameras = async () => {
+    setIsLoading(true);
+    setError("");
+    
     try {
-      const cameraList = await apiService.getCameras()
-      setCameras(cameraList)
+      const response = await apiService.getCameras();
+      console.log('API Response:', response); // Log the raw response
+      
+      // Ensure response is an array and has the expected structure
+      const cameraList = Array.isArray(response) 
+        ? response.map(cam => ({
+            id: cam.id || 0,
+            name: cam.name || 'Unknown Camera',
+            location: cam.location || 'Unknown Location',
+            status: cam.status || 'offline',
+            stream_url: cam.stream_url || ''
+          }))
+        : [];
+      
+      console.log('Processed cameras:', cameraList);
+      setCameras(cameraList);
+      
       if (cameraList.length > 0 && !selectedCamera) {
-        setSelectedCamera(cameraList[0].id)
+        setSelectedCamera(cameraList[0].id);
       }
     } catch (err: any) {
-      setError(`Failed to load cameras: ${err.message}`)
+      console.error('Error loading cameras:', err);
+      setError(`Failed to load cameras: ${err.message}`);
+      setCameras([]);
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -133,7 +156,8 @@ export function LiveDetection({ onDetectionAlert }: LiveDetectionProps) {
     }
   }
 
-  const selectedCameraData = cameras.find(c => c.id === selectedCamera)
+  // Safely find the selected camera
+  const selectedCameraData = cameras?.find(c => c.id === selectedCamera) || null;
 
   return (
     <div className="space-y-6">
