@@ -1,44 +1,52 @@
 "use client"
 
+import { useUser, useAuth as useClerkAuth } from "@clerk/nextjs"
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
 
 interface User {
   id: string
   username: string
+  email: string
   role: string
+  is_active: boolean
+  created_at: string
 }
 
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null)
+  const { user, isLoaded: isUserLoaded } = useUser()
+  const { signOut } = useClerkAuth()
+  const [userData, setUserData] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const router = useRouter()
 
   useEffect(() => {
-    const token = localStorage.getItem("token")
+    if (isUserLoaded) {
+      if (user) {
+        // Map Clerk user to your existing user structure
+        const mappedUser: User = {
+          id: user.id,
+          username: user.username || user.emailAddresses[0]?.emailAddress?.split('@')[0] || 'user',
+          email: user.emailAddresses[0]?.emailAddress || '',
+          role: 'viewer', // Default role, you can customize this
+          is_active: true,
+          created_at: user.createdAt?.toISOString() || new Date().toISOString(),
+        }
+        setUserData(mappedUser)
+      } else {
+        setUserData(null)
+      }
+      setIsLoading(false)
+    }
+  }, [user, isUserLoaded])
 
-    // Set mock user data regardless of token validity for testing
-    setUser({
-      id: "1",
-      username: "test-user",
-      role: "administrator",
-    })
-
-    setIsLoading(false)
-  }, [])
-
-  const logout = () => {
-    localStorage.removeItem("token")
-    setUser(null)
-    router.push("/login")
+  const logout = async () => {
+    await signOut()
+    window.location.href = "/"
   }
 
-  const isAuthenticated = !!user
-
   return {
-    user,
+    user: userData,
     isLoading,
-    isAuthenticated,
+    isAuthenticated: !!user,
     logout,
   }
 }

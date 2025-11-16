@@ -12,16 +12,19 @@ import cv2
 from database import get_db, Detection, Alert, Camera
 from auth import get_current_user
 from schemas import DetectionResponse, DetectionCreate, UserResponse, FileDetectionResponse
-from ml_model import CrimeDetectionModel
+from ml_model import get_crime_model
+from base_model import BaseDetectionModel
 from websocket_manager import websocket_manager
-from live_detection import live_detection_manager
+from live_detection import LiveDetectionManager
+from dependencies import get_live_detection_manager
 from config import settings
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-model = CrimeDetectionModel()
+# Use the global model instance from ml_model
+model = get_crime_model()
 
 def save_detection_to_db(
     db: Session,
@@ -62,9 +65,10 @@ async def upload_file_detection(
     file: UploadFile = File(...),
     camera_id: int = Form(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    current_user: UserResponse = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
 ):
-    """Upload and analyze image or video file for crime detection in the background."""
+    """Upload and analyze image or video file for crime detection."""
     try:
         allowed_extensions = {'.jpg', '.jpeg', '.png', '.mp4', '.avi', '.mov', '.mkv'}
         file_ext = os.path.splitext(file.filename)[1].lower()
@@ -78,14 +82,53 @@ async def upload_file_detection(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Process the file in the background
-        background_tasks.add_task(live_detection_manager.process_uploaded_file, file_path, camera_id)
-
-        return {
-            "message": "File upload successful. Processing in the background.",
-            "success": True,
-            "file_path": file_path
-        }
+        # Process the file immediately and return results
+        result = await live_detection_manager.process_uploaded_file(file_path, camera_id)
+        
+        # Format the response
+        if isinstance(result, dict) and 'error' in result:
+            return {
+                "message": result['error'],
+                "success": False,
+                "filename": file.filename,
+                "file_path": file_path
+            }
+        
+        # For images, result is the prediction
+        if file_ext in ['.jpg', '.jpeg', '.png']:
+            is_crime = result.get('is_crime', False) if result else False
+            crime_type = result.get('crime_type', 'Unknown') if result else 'Unknown'
+            confidence = result.get('confidence', 0.0) if result else 0.0
+            
+            message = f"Detected: {crime_type} (confidence: {confidence:.2%})"
+            if is_crime:
+                message += " - ⚠️ SUSPICIOUS ACTIVITY DETECTED!"
+            
+            return {
+                "message": message,
+                "success": True,
+                "filename": file.filename,
+                "file_path": file_path,
+                "detections": [result] if result else []
+            }
+        
+        # For videos, result contains list of detections
+        elif file_ext in ['.mp4', '.avi', '.mov', '.mkv']:
+            detections = result.get('detections', []) if isinstance(result, dict) else []
+            crime_count = len(detections)
+            
+            if crime_count > 0:
+                message = f"⚠️ Found {crime_count} suspicious activities in video!"
+            else:
+                message = "Video processed - No suspicious activity detected"
+            
+            return {
+                "message": message,
+                "success": True,
+                "filename": file.filename,
+                "file_path": file_path,
+                "detections": detections
+            }
 
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
@@ -96,7 +139,8 @@ async def start_live_detection(
     camera_id: int,
     source: str = "0",  # Default to webcam, can be RTSP URL
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
 ):
     """Start live detection on a camera feed."""
     try:
@@ -133,7 +177,8 @@ async def start_live_detection(
 async def stop_live_detection(
     camera_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
 ):
     """Stop live detection on a camera."""
     try:
@@ -157,10 +202,34 @@ async def stop_live_detection(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error stopping live detection: {str(e)}")
 
+@router.post("/live/stop-all")
+async def stop_all_live_detection(
+    current_user: UserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
+):
+    """Force stop all active live detections."""
+    try:
+        await live_detection_manager.force_stop_all()
+        
+        # Update all camera statuses to inactive
+        cameras = db.query(Camera).all()
+        for camera in cameras:
+            camera.status = "inactive"
+        db.commit()
+        
+        return {
+            "message": "All live detections stopped",
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error stopping all detections: {str(e)}")
+
 @router.get("/live/feed/{camera_id}")
 async def get_camera_feed(
     camera_id: int,
-    token: str = None
+    token: str = None,
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
 ):
     """Get live camera feed as MJPEG stream with token authentication."""
     # Validate token if provided
@@ -244,7 +313,8 @@ def create_error_frame(message: str):
 
 @router.get("/live/status")
 async def get_live_detection_status(
-    current_user: UserResponse = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
 ):
     """Get status of all active live detections."""
     try:
@@ -258,6 +328,82 @@ async def get_live_detection_status(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting status: {str(e)}")
+
+@router.get("/live/status/{camera_id}")
+async def get_camera_status(
+    camera_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
+):
+    """Get detailed status for a specific camera."""
+    try:
+        status_info = await live_detection_manager.get_camera_status(camera_id)
+        
+        if not status_info:
+            raise HTTPException(status_code=404, detail="Camera not found or not active")
+        
+        return status_info
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting camera status: {str(e)}")
+
+@router.get("/live/performance")
+async def get_performance_metrics(
+    current_user: UserResponse = Depends(get_current_user),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
+):
+    """Get real-time performance metrics for all active detections."""
+    try:
+        metrics = await live_detection_manager.get_performance_metrics()
+        
+        return {
+            "system_metrics": metrics,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting performance metrics: {str(e)}")
+
+@router.post("/live/configure/{camera_id}")
+async def configure_camera_detection(
+    camera_id: int,
+    confidence_threshold: float = Form(0.7),
+    frame_skip: int = Form(1),
+    max_fps: int = Form(30),
+    current_user: UserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
+):
+    """Configure detection parameters for a camera."""
+    try:
+        # Check if camera exists
+        camera = db.query(Camera).filter(Camera.id == camera_id).first()
+        if not camera:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        
+        # Update camera configuration
+        success = await live_detection_manager.update_camera_config(
+            camera_id, 
+            confidence_threshold=confidence_threshold,
+            frame_skip=frame_skip,
+            max_fps=max_fps
+        )
+        
+        if success:
+            return {
+                "message": f"Camera {camera_id} configuration updated",
+                "camera_id": camera_id,
+                "config": {
+                    "confidence_threshold": confidence_threshold,
+                    "frame_skip": frame_skip,
+                    "max_fps": max_fps
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update camera configuration")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error configuring camera: {str(e)}")
 
 @router.get("/api/detections", response_model=List[DetectionResponse])
 async def list_detections(
@@ -289,6 +435,169 @@ async def list_detections(
     
     return [DetectionResponse.from_orm(detection) for detection in detections]
 
+@router.get("/api/detections/history")
+async def get_detection_history(
+    camera_id: Optional[int] = None,
+    hours: int = 24,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
+):
+    """Get detection history with statistics and analytics."""
+    try:
+        # Calculate time range
+        end_time = datetime.now()
+        start_time = end_time - timedelta(hours=hours)
+        
+        # Get detection history from live detection manager
+        history_data = await live_detection_manager.get_detection_history(
+            camera_id=camera_id,
+            start_time=start_time,
+            end_time=end_time
+        )
+        
+        # Get database detections for the same period
+        query = db.query(Detection).filter(
+            Detection.timestamp >= start_time,
+            Detection.timestamp <= end_time
+        )
+        
+        if camera_id:
+            query = query.filter(Detection.camera_id == camera_id)
+        
+        db_detections = query.all()
+        
+        # Calculate statistics
+        total_detections = len(db_detections)
+        crime_detections = len([d for d in db_detections if d.detection_type != 'normal'])
+        
+        # Group by crime type
+        crime_types = {}
+        for detection in db_detections:
+            crime_type = detection.detection_type
+            if crime_type not in crime_types:
+                crime_types[crime_type] = 0
+            crime_types[crime_type] += 1
+        
+        # Calculate hourly distribution
+        hourly_distribution = {}
+        for detection in db_detections:
+            hour = detection.timestamp.hour
+            hourly_distribution[hour] = hourly_distribution.get(hour, 0) + 1
+        
+        return {
+            "period": {
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat(),
+                "hours": hours
+            },
+            "statistics": {
+                "total_detections": total_detections,
+                "crime_detections": crime_detections,
+                "normal_detections": total_detections - crime_detections,
+                "crime_rate": crime_detections / total_detections if total_detections > 0 else 0
+            },
+            "crime_types": crime_types,
+            "hourly_distribution": hourly_distribution,
+            "recent_detections": [DetectionResponse.from_orm(d) for d in db_detections[:10]],
+            "live_data": history_data
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting detection history: {str(e)}")
+
+@router.get("/api/detections/analytics")
+async def get_detection_analytics(
+    camera_id: Optional[int] = None,
+    days: int = 7,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get advanced analytics for detections."""
+    try:
+        # Calculate time range
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=days)
+        
+        # Get database detections
+        query = db.query(Detection).filter(
+            Detection.timestamp >= start_time,
+            Detection.timestamp <= end_time
+        )
+        
+        if camera_id:
+            query = query.filter(Detection.camera_id == camera_id)
+        
+        detections = query.all()
+        
+        # Calculate analytics
+        total_detections = len(detections)
+        
+        # Daily breakdown
+        daily_stats = {}
+        for detection in detections:
+            date = detection.timestamp.date().isoformat()
+            if date not in daily_stats:
+                daily_stats[date] = {"total": 0, "crimes": 0}
+            daily_stats[date]["total"] += 1
+            if detection.detection_type != 'normal':
+                daily_stats[date]["crimes"] += 1
+        
+        # Crime type breakdown
+        crime_type_stats = {}
+        for detection in detections:
+            crime_type = detection.detection_type
+            if crime_type not in crime_type_stats:
+                crime_type_stats[crime_type] = {"count": 0, "avg_confidence": 0, "max_confidence": 0}
+            crime_type_stats[crime_type]["count"] += 1
+            crime_type_stats[crime_type]["avg_confidence"] += detection.confidence
+            crime_type_stats[crime_type]["max_confidence"] = max(
+                crime_type_stats[crime_type]["max_confidence"], 
+                detection.confidence
+            )
+        
+        # Calculate average confidence for each crime type
+        for crime_type in crime_type_stats:
+            count = crime_type_stats[crime_type]["count"]
+            crime_type_stats[crime_type]["avg_confidence"] /= count
+        
+        # Peak hours analysis
+        hourly_crimes = [0] * 24
+        for detection in detections:
+            if detection.detection_type != 'normal':
+                hourly_crimes[detection.timestamp.hour] += 1
+        
+        peak_hours = []
+        for hour, count in enumerate(hourly_crimes):
+            if count > 0:
+                peak_hours.append({"hour": hour, "crimes": count})
+        
+        peak_hours.sort(key=lambda x: x["crimes"], reverse=True)
+        
+        return {
+            "period": {
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat(),
+                "days": days
+            },
+            "summary": {
+                "total_detections": total_detections,
+                "total_crimes": len([d for d in detections if d.detection_type != 'normal']),
+                "crime_rate": len([d for d in detections if d.detection_type != 'normal']) / total_detections if total_detections > 0 else 0
+            },
+            "daily_breakdown": daily_stats,
+            "crime_types": crime_type_stats,
+            "peak_hours": peak_hours[:5],  # Top 5 peak hours
+            "confidence_analysis": {
+                "avg_confidence": sum(d.confidence for d in detections) / total_detections if total_detections > 0 else 0,
+                "max_confidence": max((d.confidence for d in detections), default=0),
+                "min_confidence": min((d.confidence for d in detections), default=0)
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting analytics: {str(e)}")
+
 @router.get("/api/detections/{detection_id}", response_model=DetectionResponse)
 async def get_detection(
     detection_id: int,
@@ -305,3 +614,122 @@ async def get_detection(
         )
     
     return DetectionResponse.from_orm(detection)
+
+@router.get("/live/alerts")
+async def get_live_alerts(
+    camera_id: Optional[int] = None,
+    limit: int = 50,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
+):
+    """Get recent alerts from live detections."""
+    try:
+        # Get alerts from database
+        query = db.query(Alert).join(Detection).filter(
+            Alert.created_at >= datetime.now() - timedelta(hours=1)
+        )
+        
+        if camera_id:
+            query = query.filter(Detection.camera_id == camera_id)
+        
+        alerts = query.order_by(Alert.created_at.desc()).limit(limit).all()
+        
+        # Get live alerts from detection manager
+        live_alerts = await live_detection_manager.get_live_alerts(camera_id=camera_id)
+        
+        return {
+            "alerts": [
+                {
+                    "id": alert.id,
+                    "detection_id": alert.detection_id,
+                    "camera_id": alert.detection.camera_id,
+                    "severity": alert.severity,
+                    "message": alert.message,
+                    "timestamp": alert.created_at.isoformat(),
+                    "detection_type": alert.detection.detection_type,
+                    "confidence": alert.detection.confidence
+                }
+                for alert in alerts
+            ],
+            "live_alerts": live_alerts,
+            "total_count": len(alerts) + len(live_alerts),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting alerts: {str(e)}")
+
+@router.get("/live/health")
+async def get_system_health(
+    current_user = Depends(get_current_user),
+    live_detection_manager: LiveDetectionManager = Depends(get_live_detection_manager)
+):
+    """Get system health status including model and camera status."""
+    try:
+        # Get system metrics from live detection manager
+        system_health = await live_detection_manager.get_system_health()
+        
+        # Get active cameras count
+        active_cameras = await live_detection_manager.get_active_cameras()
+        
+        # Calculate system load
+        total_cameras = len(active_cameras)
+        avg_inference_time = system_health.get("avg_inference_time_ms", 0)
+        avg_fps = system_health.get("avg_fps", 0)
+        
+        # Determine health status
+        health_status = "healthy"
+        issues = []
+        
+        if avg_inference_time > 200:  # > 200ms is concerning
+            health_status = "degraded"
+            issues.append(f"High inference time: {avg_inference_time:.1f}ms")
+        
+        if avg_fps < 10:  # < 10 FPS is poor performance
+            health_status = "degraded"
+            issues.append(f"Low FPS: {avg_fps:.1f}")
+        
+        if total_cameras > 10:  # High load
+            health_status = "busy"
+            issues.append(f"High camera load: {total_cameras} cameras")
+        
+        return {
+            "status": health_status,
+            "timestamp": datetime.now().isoformat(),
+            "system_metrics": system_health,
+            "active_cameras": total_cameras,
+            "performance": {
+                "avg_inference_time_ms": avg_inference_time,
+                "avg_fps": avg_fps,
+                "total_processed_frames": system_health.get("total_processed_frames", 0)
+            },
+            "issues": issues,
+            "recommendations": generate_health_recommendations(health_status, issues)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting system health: {str(e)}")
+
+def generate_health_recommendations(health_status: str, issues: List[str]) -> List[str]:
+    """Generate health recommendations based on current status."""
+    recommendations = []
+    
+    if health_status == "degraded":
+        if any("inference time" in issue for issue in issues):
+            recommendations.append("Consider reducing frame skip or lowering confidence threshold")
+            recommendations.append("Check GPU utilization and consider hardware upgrade")
+        
+        if any("FPS" in issue for issue in issues):
+            recommendations.append("Optimize video processing pipeline")
+            recommendations.append("Consider reducing camera resolution")
+    
+    elif health_status == "busy":
+        recommendations.append("Consider load balancing across multiple instances")
+        recommendations.append("Implement camera prioritization for critical feeds")
+    
+    elif health_status == "healthy":
+        recommendations.append("System operating optimally")
+        recommendations.append("Monitor performance trends for proactive maintenance")
+    
+    return recommendations

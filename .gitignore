@@ -18,8 +18,73 @@ yarn-error.log*
 
 # env files
 .env*
-
+.env
+.env.local
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Backend specific
+Backend/__pycache__/
+Backend/*.pyc
+Backend/.DS_Store
+Backend/uploads/
+Backend/venv/
+Backend/env/
+Backend/.venv/
+venv/
+env/
+.venv/
+Backend/models/*.h5
+Backend/models/*.pt
+Backend/models/*.pth
+Backend/models/**/*.safetensors
+Backend/models/**/*.bin
+
+# Uploads and test files
+uploads/
+test-results/
+tests/uploads/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# Test and debug files
+test_*.py
+test_*.js
+test_*.sh
+test_*.html
+debug-*.js
+simple_test.py
+builtin_test.py
+check_backend.sh
+integration-test.js
+
+# Temporary documentation (keep main docs)
+*_FIXED.md
+*_APPLIED.md
+*_SUMMARY.md
+*_GUIDE.md
+*_CHECKLIST.md
+*_RESULTS.md
+*_COMPLETE.md
+*_UPDATE.md
+QUICKSTART.md
+SETUP.md

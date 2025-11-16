@@ -149,10 +149,13 @@ class LiveDetectionResponse(BaseModel):
     image_url: Optional[str] = None
 
 class FileDetectionResponse(BaseModel):
-    filename: str
-    detections: List[DetectionResult]
+    success: bool = True
+    message: str
+    filename: Optional[str] = None
+    file_path: Optional[str] = None
+    detections: Optional[List[DetectionResult]] = None
     total_frames: Optional[int] = None
-    processing_time: float
+    processing_time: Optional[float] = None
 
 # System Schemas
 class SystemStatus(BaseModel):

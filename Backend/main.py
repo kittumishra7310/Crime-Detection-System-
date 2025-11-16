@@ -59,43 +59,11 @@ async def startup_event():
     create_tables()
     
     # Load ML model
-    model = get_crime_model()
-    if not model.load_model():
-        logger.warning("Failed to load ML model")
+    # model = get_crime_model()
+    # if not model.load_model():
+    #     logger.warning("Failed to load ML model")
     
-    # Create default admin user if not exists
-    try:
-        db = next(get_db())
-        admin_user = db.query(User).filter(User.username == "admin").first()
-        if not admin_user:
-            admin_user = User(
-                username="admin",
-                email="admin@surveillance.com",
-                password_hash=get_password_hash("admin123"),
-                role="admin"
-            )
-            db.add(admin_user)
-            db.commit()
-            logger.info("Default admin user created")
-        
-        # Create default cameras if not exist
-        default_cameras = [
-            {"camera_id": "CAM001", "name": "Main Entrance", "location": "Building Entrance", "status": "inactive"},
-            {"camera_id": "CAM002", "name": "Parking Lot", "location": "Outdoor Parking", "status": "inactive"},
-            {"camera_id": "CAM003", "name": "Lobby Camera", "location": "Main Lobby", "status": "inactive"}
-        ]
-        
-        for cam_data in default_cameras:
-            existing_cam = db.query(Camera).filter(Camera.camera_id == cam_data["camera_id"]).first()
-            if not existing_cam:
-                camera = Camera(**cam_data)
-                db.add(camera)
-        
-        db.commit()
-        logger.info("Default cameras created")
-        db.close()
-    except Exception as e:
-        logger.warning(f"Could not create default user/cameras: {e}")
+    logger.info("System started successfully - Ready for user registration")
 
 # Health check
 @app.get("/health")
@@ -153,6 +121,45 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
         email=user_data.email,
         password_hash=hashed_password,
         role=user_data.role or 'viewer'  # Default to 'viewer' if role is not provided
+    )
+    
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    
+    return UserResponse.from_orm(db_user)
+
+@app.post("/api/auth/clerk-sync", response_model=UserResponse)
+async def clerk_sync(user_data: UserCreate, db: Session = Depends(get_db)):
+    """Sync Clerk user - create or update existing user."""
+    # Check if user exists by username
+    existing_user = db.query(User).filter(User.username == user_data.username).first()
+    
+    if existing_user:
+        # Update existing user's password
+        existing_user.password_hash = get_password_hash(user_data.password)
+        existing_user.email = user_data.email
+        db.commit()
+        db.refresh(existing_user)
+        return UserResponse.from_orm(existing_user)
+    
+    # Check by email
+    existing_email = db.query(User).filter(User.email == user_data.email).first()
+    if existing_email:
+        # Update existing user's password and username
+        existing_email.password_hash = get_password_hash(user_data.password)
+        existing_email.username = user_data.username
+        db.commit()
+        db.refresh(existing_email)
+        return UserResponse.from_orm(existing_email)
+    
+    # Create new user
+    hashed_password = get_password_hash(user_data.password)
+    db_user = User(
+        username=user_data.username,
+        email=user_data.email,
+        password_hash=hashed_password,
+        role=user_data.role or 'viewer'
     )
     
     db.add(db_user)
@@ -339,15 +346,63 @@ async def upload_for_detection(
             detail="Failed to save file."
         )
 
-    # In a real application, you would now trigger a background task
-    # to process the file with your ML model.
-    # For this demo, we'll just return a success message.
-
-    return FileDetectionResponse(
-        success=True,
-        message=f"File '{file.filename}' uploaded successfully for analysis.",
-        filename=unique_filename
-    )
+    # Process the file with the detection model
+    try:
+        from live_detection import live_detection_manager
+        
+        logger.info(f"Processing uploaded file: {file.filename}")
+        result = await live_detection_manager.process_uploaded_file(file_path, camera_id)
+        
+        if "error" in result:
+            logger.error(f"Detection error: {result['error']}")
+            return FileDetectionResponse(
+                success=False,
+                message=f"Detection failed: {result['error']}",
+                filename=unique_filename
+            )
+        
+        # For images or single detection
+        if "crime_type" in result:
+            detection_data = {
+                "crime_type": result.get("crime_type", "Unknown"),
+                "confidence": result.get("confidence", 0.0),
+                "severity": result.get("severity", "low"),
+                "id": result.get("detection_id", 0)
+            }
+            message = f"Detection complete: {result.get('crime_type', 'Unknown')} ({result.get('confidence', 0)*100:.1f}% confidence)"
+        # For videos with multiple detections
+        elif "detections" in result:
+            num_detections = len(result["detections"])
+            if num_detections > 0:
+                latest = result["detections"][0]
+                detection_data = {
+                    "crime_type": latest.get("crime_type", "Unknown"),
+                    "confidence": latest.get("confidence", 0.0),
+                    "severity": latest.get("severity", "low"),
+                    "id": latest.get("detection_id", 0)
+                }
+                message = f"Video processed: {num_detections} detection(s) found"
+            else:
+                detection_data = None
+                message = "Video processed: No crimes detected"
+        else:
+            detection_data = None
+            message = result.get("message", "File processed successfully")
+        
+        return FileDetectionResponse(
+            success=True,
+            message=message,
+            filename=unique_filename,
+            detection=detection_data
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing file: {e}")
+        return FileDetectionResponse(
+            success=False,
+            message=f"Processing error: {str(e)}",
+            filename=unique_filename
+        )
 
 # Include routers
 from detection_routes import router as detection_router
